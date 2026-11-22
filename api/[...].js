@@ -16,8 +16,11 @@ export default async function handler(req, res) {
   }
 
   const incoming = new URL(req.url, 'https://vercel.invalid')
-  const route = incoming.pathname.replace(/^\/api\/?/, '')
+  const splat = req.query?.path
+  const route = (Array.isArray(splat) ? splat.join('/') : typeof splat === 'string' ? splat : incoming.pathname.replace(/^\/api\/?/, '')).replace(/^\/+/, '')
   if (!route) return res.status(404).json({ error: 'API route not found.' })
+  const search = new URLSearchParams(incoming.search)
+  if (splat !== undefined) search.delete('path')
 
   const headers = { Accept: 'application/json', 'Cache-Control': 'no-store' }
   for (const name of ['authorization', 'content-type', 'user-agent', 'x-forwarded-for']) {
@@ -29,7 +32,8 @@ export default async function handler(req, res) {
     : undefined
 
   try {
-    const upstream = await fetch(`${base.origin}/api/${route}${incoming.search}`, { method: req.method, headers, body })
+    const query = search.toString()
+    const upstream = await fetch(`${base.origin}/api/${route}${query ? `?${query}` : ''}`, { method: req.method, headers, body })
     const contentType = upstream.headers.get('content-type')
     if (contentType) res.setHeader('Content-Type', contentType)
     res.setHeader('Cache-Control', 'no-store')
