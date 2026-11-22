@@ -9,15 +9,19 @@ Inventory · warehouses · sales & CRM · purchasing · double-entry accounting 
 
 Single server: `JWT_SECRET=your-long-random-string npm start`. Databases from earlier versions upgrade automatically (new columns and tables are added on start; no data is removed).
 
-## Production deployment (Vercel + Render)
-The frontend deploys to Vercel. The Express API and SQLite database must run on a persistent server; Vercel Functions have ephemeral storage, so they cannot host this SQLite database. This repository includes a Render Blueprint (`render.yaml`) for the API and a Vercel proxy (`api/[...path].js`) for same-origin `/api` requests.
+## Production deployment (Vercel + Oracle Cloud Always Free)
+The frontend deploys to Vercel. The Express API and SQLite database need a persistent machine; Vercel Functions have ephemeral storage. Oracle Cloud offers Always Free VM resources that can run this existing Node + SQLite backend without moving the database to another product. Always Free has regional capacity limits, so an instance might not be immediately available. Account signup requires payment card verification and may place a temporary authorization hold; resources within the Always Free limits are not billed. See Oracle's [Always Free resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm) and [Free Tier FAQ](https://www.oracle.com/cloud/free/faq/).
 
-1. In Render, create a Blueprint from this repository and deploy `ledgerline-api`. The blueprint attaches persistent storage for SQLite.
-2. Set the Render environment variables `APP_URL` to `https://erp-ledgerline.vercel.app`, and configure `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, and `MAIL_FROM` with working email provider credentials. `AUTH_ALERT_TO` defaults to `rsha230121@gmail.com`.
-3. In Vercel, set `BACKEND_URL` to the Render service's HTTPS origin, for example `https://ledgerline-api.onrender.com`, then redeploy the frontend.
-4. Check `https://<render-service>.onrender.com/api/health`; it should return `status: "ok"` and `emailConfigured: true`.
+1. Create an Oracle Cloud Free Tier account. Create an Ubuntu VM using an **Always Free Eligible** shape. The Ampere A1 allocation currently includes up to 2 OCPUs and 12 GB memory total; a 1 OCPU / 6 GB VM fits within it. Choose a public subnet and assign a public IPv4 address.
+2. In the VM's VCN security list, allow inbound TCP 22 for your SSH address, and TCP 80 and 443 for web traffic. Do not expose port 3001 publicly.
+3. Create a free DuckDNS subdomain and point it to the VM's public IPv4 address. Install Caddy, then copy `deploy/Caddyfile.example` to `/etc/caddy/Caddyfile` and replace the example hostname. Caddy automatically provisions and renews HTTPS certificates for a public DNS name; see its [automatic HTTPS docs](https://caddyserver.com/docs/automatic-https). DuckDNS provides [free dynamic DNS](https://www.duckdns.org/faqs.jsp).
+4. Install Git, Node.js 22, and the native build tools (`build-essential` and `python3`). Clone this repository to `/opt/ledgerline`, then run `npm ci --omit=dev` in that directory.
+5. Create a `ledgerline` Linux user, and create `/var/lib/ledgerline` for the database. Create `/etc/ledgerline/ledgerline.env` with mode `600` containing `NODE_ENV=production`, `PORT=3001`, a long random `JWT_SECRET`, `LEDGERLINE_DB=/var/lib/ledgerline/ledgerline.db`, `APP_URL=https://erp-ledgerline.vercel.app`, `SMTP_HOST`, `SMTP_PORT=587`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`, and `AUTH_ALERT_TO=rsha230121@gmail.com`. Keep SMTP credentials only in this VM environment file. For Gmail, use a Google App Password rather than your normal sign-in password.
+6. Install `deploy/ledgerline.service` as `/etc/systemd/system/ledgerline.service`, ensure the `ledgerline` user owns `/opt/ledgerline` and `/var/lib/ledgerline`, then run `sudo systemctl daemon-reload && sudo systemctl enable --now ledgerline`.
+7. In Vercel project settings, set `BACKEND_URL` to the HTTPS origin, such as `https://ledgerline-api.example.duckdns.org` (no `/api` suffix), for the Production environment. Redeploy Vercel after saving the variable.
+8. Check `https://<your-duckdns-name>/api/health`; it should return `status: "ok"` and `emailConfigured: true`.
 
-The persistent database on a newly created backend starts empty. Sign up with the production account once, or export the existing account from **Security → Backup & restore** before switching backends and restore that file after signing up. A local SQLite database is not copied to Render by deploying the code.
+A new server database starts empty. Sign up on the production site or export the existing account from **Security → Backup & restore** before switching backends, then restore that backup after signing up. Deploying the code does not copy your local SQLite database.
 
 Login and signup still succeed if an alert email cannot be delivered, but the signed-in screen shows a warning. Password recovery reports a server error when email delivery is unavailable. Alert emails include the account name, business, email, role, timestamp, IP address and browser user agent; they never include the password. Password reset links use `APP_URL` and expire after one hour.
 

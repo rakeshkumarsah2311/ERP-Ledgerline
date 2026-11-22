@@ -1,0 +1,21 @@
+[Unit]
+Description=Ledgerline API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ledgerline
+Group=ledgerline
+WorkingDirectory=/opt/ledgerline
+EnvironmentFile=/etc/ledgerline/ledgerline.env
+ExecStart=/usr/bin/node /opt/ledgerline/server/index.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/ledgerline
+
+[Install]
+WantedBy=multi-user.target
