@@ -22,7 +22,7 @@ export default function Auth({ onAuth }) {
     setBusy(true)
     try {
       if (mode === 'reset') { await api('/password/reset', 'POST', { token: resetToken, password: f.password }); history.replaceState({}, '', '/'); setNotice('Your password has been updated. You can now sign in.'); setMode('in') }
-      else { const r = await api(up ? '/signup' : '/login', 'POST', f); setPending({ user: r.user, token: r.token }); setNotice(up ? 'Your account is ready.' : 'You’re signed in securely.') }
+      else { const r = await api(up ? '/signup' : '/login', 'POST', f); setPending({ user: r.user, token: r.token, emailSent: r.emailSent }); setNotice(up ? 'Your account is ready.' : 'You’re signed in securely.') }
     } catch (x) { setErr(x.message) }
     setBusy(false)
   }
@@ -44,6 +44,6 @@ export default function Auth({ onAuth }) {
       {mode === 'in' && <button type="button" className="authlink" onClick={() => { setMode('forgot'); setErr(''); setNotice('') }}>Forgot your password?</button>}
       {['forgot', 'reset'].includes(mode) && <button type="button" className="authlink" onClick={() => { setMode('in'); setErr(''); setNotice('') }}>Back to sign in</button>}
     </form>
-    {pending && <div className="mod authsuccess" role="dialog" aria-modal="true" aria-labelledby="authsuccess-title"><div><div className="authbadge">✓</div><p className="authcaption">LEDGERLINE ACCOUNT</p><h2 id="authsuccess-title">{up ? 'You’re all set.' : 'Welcome back.'}</h2><p className="lead">{up ? 'Your business workspace has been created successfully.' : 'You have signed in successfully. Your workspace is ready.'}</p><button className="btn acc" onClick={() => onAuth(pending.user, pending.token)}>Continue to Ledgerline</button></div></div>}</div>
+    {pending && <div className="mod authsuccess" role="dialog" aria-modal="true" aria-labelledby="authsuccess-title"><div><div className="authbadge">✓</div><p className="authcaption">LEDGERLINE ACCOUNT</p><h2 id="authsuccess-title">{up ? 'You’re all set.' : 'Welcome back.'}</h2><p className="lead">{up ? 'Your business workspace has been created successfully.' : 'You have signed in successfully. Your workspace is ready.'}</p>{pending.emailSent === false && <p className="warn" role="status">You’re signed in, but the email alert could not be sent. The administrator needs to check the server’s SMTP settings.</p>}<button className="btn acc" onClick={() => onAuth(pending.user, pending.token)}>Continue to Ledgerline</button></div></div>}</div>
   )
 }

@@ -14,6 +14,7 @@ import { mountAutomation, ensureRules } from './automation.js'
 import { mountReturns } from './returns.js'
 
 const dir = path.dirname(fileURLToPath(import.meta.url))
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) throw new Error('JWT_SECRET must be set in production')
 const SECRET = process.env.JWT_SECRET || 'change-this-secret-in-production'
 const db = new Database(process.env.LEDGERLINE_DB || path.join(dir, 'ledgerline.db'))
 db.pragma('journal_mode = WAL')
@@ -77,7 +78,9 @@ db.exec("UPDATE docs SET status='approved', stocked=1 WHERE status IS NULL; UPDA
 const norm = (c, v) => (v == null || v === '' ? (c === 'gst_rate' ? 18 : NUM.has(c) ? 0 : '') : typeof v === 'boolean' ? +v : NUM.has(c) ? Number(v) || 0 : v)
 const out = r => ({ ...Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v ?? ''])), ...(r.manage !== undefined && { manage: !!r.manage }) })
 const app = express()
+app.set('trust proxy', 1)
 app.use(cors()); app.use(express.json({ limit: '15mb' }))
+app.get('/api/health', (_req, res) => res.json({ status: 'ok', emailConfigured: !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS && process.env.MAIL_FROM) }))
 // Record-level audit trail: every successful change is logged with who, what, which record and from where.
 app.use('/api', (req, res, next) => {
   const p = req.path.split('/').filter(Boolean)
@@ -141,15 +144,27 @@ const deduct = (uid, id) => {
 }
 
 // ---------- Auth ----------
-const sendAuthMail = async (subject, text) => {
-  if (!process.env.SMTP_HOST) return false
+const sendMail = async ({ to, subject, text }) => {
+  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS || !process.env.MAIL_FROM) return false
   const nm = await import('nodemailer')
   const port = Number(process.env.SMTP_PORT) || 587
-  const transport = nm.default.createTransport({ host: process.env.SMTP_HOST, port, secure: port === 465, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } })
-  await transport.sendMail({ from: process.env.MAIL_FROM || process.env.SMTP_USER, to: 'rsha230121@gmail.com', subject, text })
+  const transport = nm.default.createTransport({ host: process.env.SMTP_HOST, port, secure: port === 465, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }, connectionTimeout: 10000, greetingTimeout: 10000, socketTimeout: 15000 })
+  await transport.sendMail({ from: process.env.MAIL_FROM, to, subject, text })
   return true
 }
-app.post('/api/signup', (req, res) => {
+const authAlert = async (kind, u, req) => {
+  const when = new Date().toISOString(), ip = req.ip || req.headers['x-forwarded-for'] || 'unknown'
+  const details = [`Event: ${kind}`, `Name: ${u.name}`, `Business: ${u.business || '—'}`, `Email: ${u.email}`, `Role: ${u.role || 'admin'}`, `Time (UTC): ${when}`, `IP: ${ip}`, `Device: ${String(req.headers['user-agent'] || 'unknown').slice(0, 300)}`]
+  const recipient = process.env.AUTH_ALERT_TO || 'rsha230121@gmail.com', subject = `Ledgerline: ${kind} — ${u.email}`, body = details.join('\n')
+  try { if (await sendMail({ to: recipient, subject, text: body })) return true }
+  catch (e) { console.error('Account alert email failed:', e.message) }
+  try {
+    db.prepare('INSERT INTO outbox(id,user_id,channel,recipient,subject,body,status,error) VALUES(?,?,?,?,?,?,?,?)')
+      .run(crypto.randomUUID().slice(0, 8), u.owner_id || u.id, 'email', recipient, subject, body, 'queued', 'Awaiting successful SMTP delivery')
+  } catch (e) { console.error('Could not queue account alert:', e.message) }
+  return false
+}
+app.post('/api/signup', async (req, res) => {
  try {
   const { body: b } = req
   const email = String(b.email || '').trim().toLowerCase()
@@ -160,35 +175,37 @@ app.post('/api/signup', (req, res) => {
   const id = db.prepare("INSERT INTO users(name,business,email,phone,hash,role) VALUES(?,?,?,?,?,'admin')").run(b.name.trim(), b.business.trim(), email, b.phone || '', bcrypt.hashSync(b.password, 10)).lastInsertRowid
   db.prepare('INSERT INTO company(user_id,name,phone) VALUES(?,?,?)').run(id, b.business.trim(), b.phone || ''); defWh(id)
   const u = { id, name: b.name.trim(), business: b.business.trim(), email, role: 'admin' }
-  sendAuthMail('Ledgerline: new account created', `A Ledgerline account was created.\nName: ${u.name}\nBusiness: ${u.business}\nEmail: ${u.email}\nTime: ${new Date().toISOString()}`).catch(e => console.error('Auth email failed:', e.message))
-  res.json({ token: token(u), user: pub(u) })
+  const emailSent = await authAlert('new account created', u, req)
+  res.json({ token: token(u), user: pub(u), emailSent })
  } catch(e) { res.status(400).json({ error: e.message }) }
 })
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
  try {
   const { body: b, ip } = req
   const u = db.prepare('SELECT * FROM users WHERE email=?').get(String(b.email || '').trim().toLowerCase())
   if (!u || !bcrypt.compareSync(String(b.password || ''), u.hash)) throw new Error('Incorrect email or password')
   db.prepare("INSERT INTO audit_log(user_id,actor_id,actor,role,action,entity,entity_id,ip) VALUES(?,?,?,?,'login','session','',?)").run(u.owner_id || u.id, u.id, u.name, u.role || 'admin', ip)
-  sendAuthMail('Ledgerline: account login', `A Ledgerline account signed in.\nName: ${u.name}\nBusiness: ${u.business || ''}\nEmail: ${u.email}\nTime: ${new Date().toISOString()}\nIP: ${ip}`).catch(e => console.error('Auth email failed:', e.message))
-  res.json({ token: token(u), user: pub(u) })
+  const emailSent = await authAlert('login', u, req)
+  res.json({ token: token(u), user: pub(u), emailSent })
  } catch(e) { res.status(400).json({ error: e.message }) }
 })
 app.post('/api/password/forgot', async (req, res) => {
+  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS || !process.env.MAIL_FROM) return res.status(503).json({ error: 'Password recovery email is not configured on the server yet.' })
   const email = String(req.body.email || '').trim().toLowerCase()
   const u = db.prepare('SELECT id,email FROM users WHERE email=?').get(email)
   if (u) {
     const raw = crypto.randomBytes(32).toString('hex'), digest = crypto.createHash('sha256').update(raw).digest('hex')
     db.prepare('DELETE FROM password_resets WHERE user_id=?').run(u.id)
     db.prepare('INSERT INTO password_resets(token_hash,user_id,expires) VALUES(?,?,?)').run(digest, u.id, Date.now() + 3600000)
-    const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`
+    const base = (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '')
     try {
-      const nm = await import('nodemailer')
-      if (!process.env.SMTP_HOST) throw new Error('Email is not configured')
-      const port = Number(process.env.SMTP_PORT) || 587
-      const transport = nm.default.createTransport({ host: process.env.SMTP_HOST, port, secure: port === 465, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } })
-      await transport.sendMail({ from: process.env.MAIL_FROM || process.env.SMTP_USER, to: u.email, subject: 'Reset your Ledgerline password', text: `Use this link within one hour to reset your password:\n${base}/?reset=${raw}` })
-    } catch(e) { console.error('Password reset email failed:', e.message) }
+      const sent = await sendMail({ to: u.email, subject: 'Reset your Ledgerline password', text: `Use this link within one hour to reset your password:\n${base}/?reset=${raw}` })
+      if (!sent) throw new Error('Email provider is not configured')
+    } catch(e) {
+      db.prepare('DELETE FROM password_resets WHERE user_id=?').run(u.id)
+      console.error('Password reset email failed:', e.message)
+      return res.status(503).json({ error: 'We could not send the recovery email. Please try again later or contact the administrator.' })
+    }
   }
   res.json({ ok: true, message: 'If that email has an account, a password reset link is on its way.' })
 })

@@ -9,6 +9,18 @@ Inventory · warehouses · sales & CRM · purchasing · double-entry accounting 
 
 Single server: `JWT_SECRET=your-long-random-string npm start`. Databases from earlier versions upgrade automatically (new columns and tables are added on start; no data is removed).
 
+## Production deployment (Vercel + Render)
+The frontend deploys to Vercel. The Express API and SQLite database must run on a persistent server; Vercel Functions have ephemeral storage, so they cannot host this SQLite database. This repository includes a Render Blueprint (`render.yaml`) for the API and a Vercel proxy (`api/[...path].js`) for same-origin `/api` requests.
+
+1. In Render, create a Blueprint from this repository and deploy `ledgerline-api`. The blueprint attaches persistent storage for SQLite.
+2. Set the Render environment variables `APP_URL` to `https://erp-ledgerline.vercel.app`, and configure `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, and `MAIL_FROM` with working email provider credentials. `AUTH_ALERT_TO` defaults to `rsha230121@gmail.com`.
+3. In Vercel, set `BACKEND_URL` to the Render service's HTTPS origin, for example `https://ledgerline-api.onrender.com`, then redeploy the frontend.
+4. Check `https://<render-service>.onrender.com/api/health`; it should return `status: "ok"` and `emailConfigured: true`.
+
+The persistent database on a newly created backend starts empty. Sign up with the production account once, or export the existing account from **Security → Backup & restore** before switching backends and restore that file after signing up. A local SQLite database is not copied to Render by deploying the code.
+
+Login and signup still succeed if an alert email cannot be delivered, but the signed-in screen shows a warning. Password recovery reports a server error when email delivery is unavailable. Alert emails include the account name, business, email, role, timestamp, IP address and browser user agent; they never include the password. Password reset links use `APP_URL` and expire after one hour.
+
 ## Try it with sample data
 `npm run demo` (with the server running and an empty database) loads a complete sample business and self-checks the results. `TESTING_GUIDE.md` walks through every module with the data and expected figures.
 
@@ -17,8 +29,10 @@ Single server: `JWT_SECRET=your-long-random-string npm start`. Databases from ea
 |---|---|
 | JWT_SECRET | Signs login tokens. Always set in production. |
 | PORT | Server port (default 3001). |
-| SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM | Enables account activity alerts to `rsha230121@gmail.com`, password recovery emails, and automated email. Needs the optional `nodemailer` package. |
-| APP_URL | Public frontend URL used to build password recovery links when the app is hosted separately from the API. |
+| SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM | Required for account activity alerts, password recovery emails, and automated email. Needs `nodemailer`. |
+| AUTH_ALERT_TO | Login/signup alert recipient (defaults to `rsha230121@gmail.com`). |
+| APP_URL | Public frontend URL used to build password recovery links, for example `https://erp-ledgerline.vercel.app`. |
+| BACKEND_URL | On Vercel, the HTTPS origin of the persistent Render API service. |
 | GST_MODE=live, GSP_URL, GSP_CLIENT_ID, GSP_CLIENT_SECRET, GSP_GSTIN, GSP_USER, GSP_PASSWORD | Live GST calls through your GSP. Default is sandbox (simulated). |
 
 ## Roles
