@@ -2,7 +2,7 @@
 // Usage: start the server (npm run server), then:  npm run demo      (optional: BASE=http://localhost:3001)
 import { closingChecks, healthScore, cashForecast, execSummary } from '../src/intel.js'
 
-const BASE = (process.env.BASE || 'http://localhost:3001') + '/api', PASS = 'Demo@1234', now = new Date()
+const BASE = (process.env.BASE || 'http://localhost:3001') + '/api', PASS = process.env.DEMO_PASSWORD || 'Demo@1234', ADMIN_EMAIL = process.env.DEMO_EMAIL || 'admin@ledgerline.test', now = new Date()
 const iso = d => d.toISOString().slice(0, 10), T = iso(now), M1 = iso(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))).slice(0, 7)
 const ago = n => iso(new Date(now.getTime() - n * 864e5)), d1 = n => `${M1}-${String(n).padStart(2, '0')}`, plus = n => iso(new Date(now.getTime() + n * 864e5))
 const tok = {}; let bad = 0
@@ -14,8 +14,13 @@ const line = (code, name, price, qty, rate = 18, hsn = '') => ({ code, name, uom
 const bal = (S, a) => Math.round(S.ledger.filter(l => l.account === a).reduce((x, l) => x + l.debit - l.credit, 0) * 100) / 100
 
 say('1. Create the business and the team')
-const su = await call(null, 'POST', '/signup', { name: 'Rohan Sharma', business: 'Sharma Building Supplies', email: 'admin@ledgerline.test', phone: '9800000000', password: PASS })
-if (!su.ok) { console.log('Demo data is already loaded (admin@ledgerline.test exists). Use a fresh database to load it again.'); process.exit(0) }
+const su = await call(null, 'POST', '/signup', { name: 'Rohan Sharma', business: 'Sharma Building Supplies', email: ADMIN_EMAIL, phone: '9800000000', password: PASS })
+if (!su.ok) {
+  const existing = await call(null, 'POST', '/login', { email: ADMIN_EMAIL, password: PASS })
+  if (existing.ok) console.log(`Demo data is already loaded (${ADMIN_EMAIL} exists).`)
+  else console.log(`Demo data is already loaded. The configured demo account (${ADMIN_EMAIL}) could not be created because that email is already in use.`)
+  process.exit(0)
+}
 tok.admin = su.j.token
 for (const [n, r] of [['Meera Das', 'manager'], ['Arjun Roy', 'accountant'], ['Sam Thapa', 'staff'], ['Chitra Sen', 'ceo']]) { await must(tok.admin, 'POST', '/team', { name: n, email: `${r}@ledgerline.test`, password: PASS, role: r }); tok[r] = (await must(null, 'POST', '/login', { email: `${r}@ledgerline.test`, password: PASS })).token }
 console.log('✓ admin, manager, accountant, staff and ceo users created')

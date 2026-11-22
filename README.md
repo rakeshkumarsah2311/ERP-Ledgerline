@@ -4,6 +4,7 @@ Inventory · warehouses · sales & CRM · purchasing · double-entry accounting 
 ## Run
     npm install
     npm run dev           # API + database, then React app on http://localhost:5173
+    npm run presentation  # Local, no-hosting-cost client demo with sample data
     npm run server        # API only, if you want to run the frontend separately
     npm test              # 17 unit tests + 19 end-to-end workflow tests (starts the real server on a temporary database)
 
@@ -27,6 +28,8 @@ Login and signup still succeed if an alert email cannot be delivered, but the si
 
 ## Try it with sample data
 `npm run demo` (with the server running and an empty database) loads a complete sample business and self-checks the results. `TESTING_GUIDE.md` walks through every module with the data and expected figures.
+
+For a client presentation without paying for a hosted API or database, run `npm run presentation` after `npm install`. It starts the API on your computer, uses the local SQLite database, loads the sample business, and starts the website. By default, sign in with `admin@ledgerline.test` / `Demo@1234`. To use a different local demo email, set `DEMO_EMAIL` and `DEMO_PASSWORD` in the terminal before launching; the password is never stored in project source. Keep the terminal open during the presentation. The demo database stays on your computer in `server/ledgerline.db`; it is not uploaded to Vercel. For a client on the same Wi-Fi, share your computer's local IP address with port `5173`. This is intended for an in-person demo, not public production hosting.
 
 ## Environment variables
 | Variable | Purpose |
